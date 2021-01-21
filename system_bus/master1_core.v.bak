@@ -1,0 +1,235 @@
+module master1_core (
+    input clk,
+    input reset,
+
+    //connections with the ports of master interface to the the master side
+    //NOTE : mi - master interface
+    output reg [15:0]addr_to_mi,
+    output reg write_addr_req_to_mi = 0,
+    output reg [7:0]write_data_to_mi,
+    output reg write_data_req_to_mi = 0,
+    output reg read_data_req_to_mi  = 0,
+    input ok_response_from_mi,
+    input [7:0]read_data_from_mi,
+    input req_done_from_mi
+);
+
+//Address Parameters
+parameter STARTBIT = 1'b1;
+parameter SLAVE1 = 2'b01, SLAVE2 = 2'b10, SLAVE3 = 2'b11;
+parameter WRITE = 1'b1, READ = 1'b0; 
+
+
+//registers and wires needs for execution
+reg [5:0] state             = 5'd0;
+reg [1:0]initial_idle_time  = 2'd2;
+
+reg [11:0]write1_addr       = 12'd500;
+reg [7:0]write1_data        = 8'd100;
+reg [2:0]write1_size        = 2;
+
+reg [11:0] read1_addr       = 12'd100;
+reg [2:0]  read1_size       = 2;
+reg [7:0]  read1_data[2];
+
+reg [5:0]  idle1_cycles     = 5'd30;
+
+reg [11:0]write2_addr       = 12'd2000;
+reg [7:0]write2_data        = 8'd180;
+reg [2:0]write2_size        = 2;
+
+//############## Sequence of execution #################
+//######################################################
+
+//STATES:
+parameter INITIAL_IDLE                  = 0;
+
+parameter WRITE1_UPDATE_ADDR            = 1;
+parameter WRITE1_ADDR_RQ                = 2;
+parameter WRITE1_OK_RES                 = 3;
+parameter WRITE1_UPDATE_DATA            = 4;
+parameter WRITE1_DATA_RQ                = 5;
+parameter WRITE1_RQ_DONE                = 6;
+
+parameter READ1_UPDATE_ADDR             = 7;
+parameter READ1_ADDR_RQ                 = 8;
+parameter READ1_OK_RES                  = 9;
+parameter READ1_DATA_RQ                 = 10;
+parameter READ1_RQ_DONE                 = 11;
+
+parameter IDLE1                         = 12;
+
+parameter WRITE2_UPDATE_ADDR            = 13;
+parameter WRITE2_ADDR_RQ                = 14;
+parameter WRITE2_OK_RES                 = 15;
+parameter WRITE2_UPDATE_DATA            = 16;
+parameter WRITE2_DATA_RQ                = 17;
+parameter WRITE2_RQ_DONE                = 18;
+
+parameter ALL_DONE                      = 19;
+
+//STATE MACHINE
+always@(posedge clk or negedge reset) begin
+    if(~reset)begin
+        state                <= 0;
+        write_addr_req_to_mi <= 0;
+        write_data_req_to_mi <= 0;
+        read_data_req_to_mi  <= 0;
+        initial_idle_time    <= 2;
+        write1_addr          <= 12'd500;
+    end
+    else begin
+        case(state)
+            INITIAL_IDLE: begin
+                if(initial_idle_time > 0)
+                    initial_idle_time <= initial_idle_time -1;
+                else
+                    state <= WRITE1_UPDATE_ADDR;
+            end
+
+            //WRITE1: Write 100,150to Slave1 --> memory locations: 500, 501
+            WRITE1_UPDATE_ADDR: begin  
+                if(write1_size == 0)begin
+                    state <= READ1_UPDATE_ADDR;
+                end
+                else begin
+                    write1_size <= write1_size-1;         
+                    addr_to_mi <= {STARTBIT,SLAVE1,WRITE,write1_addr};
+                    write1_addr <= write1_addr + 1;
+                    state <= WRITE1_ADDR_RQ;
+                end
+            end
+
+            WRITE1_ADDR_RQ: begin
+                write_addr_req_to_mi <= 1;
+                state <= WRITE1_OK_RES;
+            end
+
+            WRITE1_OK_RES: begin
+                if(ok_response_from_mi == 1)begin
+                    write_addr_req_to_mi <= 0;
+                    state <= WRITE1_UPDATE_DATA;
+                end
+            end
+
+            WRITE1_UPDATE_DATA: begin
+                write_data_to_mi <= write1_data;
+                write1_data <= write1_data + 50;
+                state <= WRITE1_DATA_RQ;
+            end
+
+            WRITE1_DATA_RQ: begin
+                write_data_req_to_mi <= 1;
+                state <= WRITE1_RQ_DONE;
+            end
+            WRITE1_RQ_DONE: begin
+                if(req_done_from_mi == 1) begin
+                    write_data_req_to_mi <= 0;
+                    state <= WRITE1_UPDATE_ADDR;
+                end
+            end
+
+
+            //READ1: Read memory locations: 100, 101 from Slave 2 to read1_data[2] registers
+            READ1_UPDATE_ADDR: begin
+                if(read1_size == 0)begin
+                    state <= IDLE1;
+                end
+                else begin
+                    read1_size  <= read1_size-1;         
+                    addr_to_mi  <= {STARTBIT,SLAVE2,READ,read1_addr};
+                    read1_addr  <= read1_addr + 1;
+                    state <= READ1_ADDR_RQ;
+                end
+            end
+
+            READ1_ADDR_RQ: begin
+                write_addr_req_to_mi <= 1;
+                state <= READ1_OK_RES;
+            end
+
+            READ1_OK_RES: begin
+                if(ok_response_from_mi == 1)begin
+                    write_addr_req_to_mi <= 0;
+                    state <= READ1_DATA_RQ;
+                end
+            end
+
+            READ1_DATA_RQ: begin
+                read_data_req_to_mi <= 1;
+                state <= READ1_RQ_DONE;
+            end
+
+            READ1_RQ_DONE: begin
+                if(req_done_from_mi == 1) begin
+                    read_data_req_to_mi <= 0;
+                    read1_data[read1_size] <= read_data_from_mi;
+                    state <= READ1_UPDATE_ADDR;
+                end
+            end
+
+
+            //Master idle for 30 clock cycles
+            IDLE1: begin
+                if(idle1_cycles == 0) begin
+                    state <= WRITE2_UPDATE_ADDR;
+                end
+                idle1_cycles <= idle1_cycles -1;
+            end
+
+
+            //WRITE2: Write 180,190 to Slave3 --> memory locations: 2000, 2001
+            WRITE2_UPDATE_ADDR: begin  
+                if(write2_size == 0)begin
+                    state <= ALL_DONE;
+                end
+                else begin
+                    write2_size <= write2_size-1;         
+                    addr_to_mi <= {STARTBIT,SLAVE3,WRITE,write2_addr};
+                    write2_addr <= write2_addr + 1;
+                    state <= WRITE2_ADDR_RQ;
+                end
+            end
+
+            WRITE2_ADDR_RQ: begin
+                write_addr_req_to_mi <= 1;
+                state <= WRITE2_OK_RES;
+            end
+
+            WRITE2_OK_RES: begin
+                if(ok_response_from_mi == 1)begin
+                    write_addr_req_to_mi <= 0;
+                    state <= WRITE2_UPDATE_DATA;
+                end
+            end
+
+            WRITE2_UPDATE_DATA: begin
+                write_data_to_mi <= write2_data;
+                write2_data <= write2_data + 10;
+                state <= WRITE2_DATA_RQ;
+            end
+
+            WRITE2_DATA_RQ: begin
+                write_data_req_to_mi <= 1;
+                state <= WRITE2_RQ_DONE;
+            end
+            WRITE2_RQ_DONE: begin
+                if(req_done_from_mi == 1) begin
+                    write_data_req_to_mi <= 0;
+                    state <= WRITE2_UPDATE_ADDR;
+                end
+            end
+
+
+            //THE END FOREVER IDLE
+            ALL_DONE: begin
+                state <= ALL_DONE;
+            end
+
+        endcase
+    end
+
+end
+
+
+endmodule // arbiter

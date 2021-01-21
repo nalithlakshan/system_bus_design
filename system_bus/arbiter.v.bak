@@ -1,0 +1,52 @@
+module arbiter (
+    input clk,
+    input reset,
+    input [1:0]req_from_master,                     //[m1,m2]
+    input [5:0]split_req_from_slave,                //[s1->m1,s1->m2, s2->m1,s2->m2, s3->m1,s3->m2]
+	input [1:0]bus_utilization,                     //[m1,m2]
+	output reg [1:0]grant_to_master,                //[m1,m2]
+    output reg [5:0]notify_granted_master_to_slave  //[s1<-m1,s1<-m2, s2<-m1,s2<-m2, s3<-m1,s3<-m2]
+);
+
+wire [1:0]current_requests; //[m1,m2]
+
+//either get responses from masters or get request from slaves waiting in the split states to grant permission for corresponding master
+assign current_requests[1] = req_from_master[1] || split_req_from_slave[5] || split_req_from_slave[3] || split_req_from_slave[1];
+assign current_requests[0] = req_from_master[0] || split_req_from_slave[4] || split_req_from_slave[2] || split_req_from_slave[0];
+
+initial begin // initially no master is granted. no master is notified to slave
+    grant_to_master                <= 2'b00;
+    notify_granted_master_to_slave <= 6'b000000;
+end
+
+always @(posedge clk or negedge reset) begin 
+
+    if(~reset)begin //asynchronous reset
+        grant_to_master                <= 2'b00;                //no masters are granted
+        notify_granted_master_to_slave <= 6'b000000;            //slaves are notified as no masters granted
+    end   
+    else if(bus_utilization == 2'b00) begin                     //grants only when bus line is idle
+        case(current_requests)                                  //process the requests from masters and slaves
+            2'b00:begin                                         //no requests
+                grant_to_master                 <= 2'b00;
+                notify_granted_master_to_slave  <= 6'b000000;
+                end
+            2'b10:begin                                         //request to grant master 1
+                grant_to_master                 <= 2'b10;       //grant master 1
+                notify_granted_master_to_slave  <= 6'b101010;   //notify 3 slaves that master 1 is granted
+                end
+            2'b01:begin                                         //request to grant master 2
+                grant_to_master                 <= 2'b01;       //grant master 2   
+                notify_granted_master_to_slave  <= 6'b010101;   //notify 3 slaves that master 2 is granted
+                end
+            //high priority goes to master 1
+            2'b11:begin                                         //request to grant both master 1 and 2
+                grant_to_master                 <= 2'b10;       //master 1 is granted (high priority)
+                notify_granted_master_to_slave  <= 6'b101010;   //notify 3 slaves that master 1 is granted
+                end   
+            end 
+        endcase
+    end
+end
+
+endmodule 

@@ -1,0 +1,245 @@
+module master_interface(clk,
+                reset,
+                addr,
+                wdata,
+                rdata,
+                response,
+                req,
+                grant,
+                util,
+
+                addr_from_master,
+                write_addr_req_from_master,
+                notify_ok_response_to_master,
+                write_data_from_master,
+                read_data_to_master,
+                write_data_req_from_master,
+                read_data_req_from_master,
+                req_done_to_master,
+                force_req_from_master,
+
+                addr_en,
+                wdata_en);
+
+// from and to the design
+input clk;
+input reset;
+output addr;
+output wdata;
+input rdata;
+input [1:0] response;
+output reg req;
+input grant;
+output reg util = 0;
+output reg addr_en = 0;
+output reg wdata_en= 0;
+
+//from master module
+input [15:0] addr_from_master;
+input write_addr_req_from_master;
+output reg notify_ok_response_to_master = 0;
+input [7:0] write_data_from_master;
+output reg [7:0] read_data_to_master;
+input write_data_req_from_master;
+input read_data_req_from_master;
+output reg req_done_to_master;
+input force_req_from_master;
+
+// states of state machine
+parameter  IDLE = 3'b000, REQUEST_BUS = 3'b001,SENDADDRESS = 3'b010,
+READDATA = 3'b011, WRITEDATA = 3'b100, SPLIT = 3'b101, WAIT_FOR_SPLIT = 3'b110, CHECK_NEXT = 3'b111;
+
+//responses from slave
+parameter OK = 2'b10, BUSY = 2'b01, DONE = 2'b11,  NCK = 2'b00;
+
+//internal registers
+reg [2:0] state = IDLE;
+reg [15:0] serial_slave_address;
+reg [7:0] serial_slave_data;
+
+//send values to master module
+assign addr = serial_slave_address[15];
+assign wdata = serial_slave_data[7];
+
+
+
+//switching between states
+always @(posedge clk or negedge reset)
+begin
+    if(~reset)
+    begin
+        state <= IDLE;
+        req <= 0;
+        util <= 0;
+        addr_en <= 0;
+        wdata_en <= 0;
+        notify_ok_response_to_master <= 0;
+        read_data_to_master  <= 0;
+        req_done_to_master   <= 0;
+        state                <= IDLE;
+        serial_slave_address <= 0;
+        serial_slave_data    <= 0;
+    end
+
+    case(state)
+        IDLE:begin
+            // req <= 0;
+            util <= 0;
+            addr_en <= 0;
+            wdata_en <= 0;
+            notify_ok_response_to_master <= 0;
+            read_data_to_master  <= 0;
+            serial_slave_address <= 0;
+            serial_slave_data    <= 0;
+
+            if(write_addr_req_from_master) begin
+                state <= REQUEST_BUS;
+                req_done_to_master <= 1'b0;
+            end
+        end
+        
+        REQUEST_BUS:begin
+            req <= 1'b1;
+            serial_slave_address <= addr_from_master;
+            notify_ok_response_to_master <= 1'b1;
+            if(grant)begin
+    		    state <= SENDADDRESS;
+                addr_en  <= 1;
+                wdata_en <= 1;
+                util     <= 1;
+                req      <= 0;
+    		end 
+            else begin
+                state <= REQUEST_BUS;
+            end 
+        end
+
+        SENDADDRESS:begin
+            notify_ok_response_to_master <= 1'b0;
+            if(write_data_req_from_master && response == OK)
+            begin
+                state <= WRITEDATA;
+                serial_slave_data <= write_data_from_master;
+            end
+            else if(read_data_req_from_master && response == OK) begin
+                state <= READDATA;
+            end
+            else if(response == BUSY) begin
+                state    <= WAIT_FOR_SPLIT;
+                serial_slave_data <= write_data_from_master; 
+                util     <= 1'b0;
+                addr_en  <= 0;
+                wdata_en <= 0;
+            end
+            else begin
+                state <= SENDADDRESS;
+                serial_slave_address[15:0] <= {serial_slave_address[14:0],1'b0}; //send the address seially
+            end  
+        end
+
+        READDATA:begin
+            if(response == DONE) begin
+                state <= CHECK_NEXT;
+                req_done_to_master <= 1;
+            end
+            else begin
+                state <= READDATA;
+                read_data_to_master[7:0] <= {read_data_to_master[6:0],rdata};
+            end
+        end
+
+        WRITEDATA:begin
+            if(response == DONE) begin
+                state <= CHECK_NEXT;
+                req_done_to_master <= 1;
+            end
+            else begin
+                state <= WRITEDATA;
+                serial_slave_data[7:0] <= {serial_slave_data[6:0],1'b0};
+            end
+        end
+
+        WAIT_FOR_SPLIT: begin
+            state <= SPLIT;
+        end
+
+
+        SPLIT:begin
+            if(grant)begin
+                util <= 1'b1;
+                addr_en  <= 1;
+                wdata_en <= 1;
+            end
+            if(write_data_req_from_master && response == OK && grant) begin
+                state <= WRITEDATA;
+            end
+            else if(read_data_req_from_master && response == OK && grant) begin
+                state <= READDATA;
+            end
+            else begin
+                state <= SPLIT;
+            end
+        end
+
+        CHECK_NEXT: begin
+            state <= IDLE;
+            if(force_req_to_mi == 1)begin
+                req <= 1;
+            endend
+        end
+
+    endcase
+end
+
+
+
+
+//functionality of states
+// always @(posedge clk)
+// begin
+//     case(state)
+//         IDLE:
+//         begin
+//             req <= 1'b0;
+//             util <= 1'b0;
+//             addr_en  <= 0;
+//             wdata_en <= 0;
+//             counter_req_done = 3'b000;     
+//         end
+
+//         REQUEST_BUS:
+//         begin
+//             req <= 1'b1;
+//             serial_slave_address <= addr_from_master;
+//             serial_slave_data <= write_data_from_master;
+//             req_done_to_master <= 1'b0;
+//             notify_ok_response_to_master <= 1'b0;    
+//         end
+        
+//         SENDADDRESS:
+//         begin
+//             serial_slave_address[15:0] <= {serial_slave_address[14:0],1'b0}; //send the address seially
+//             notify_ok_response_to_master <= 1'b1;
+//             req <= 1'b0; // stop requesting from arbiter
+//             util <= 1'b1; // utilize flag of master
+//         end
+
+//         READDATA:
+//         begin
+//             counter_req_done = counter_req_done + 3'b001;
+//             if(counter_req_done == 3'b111) req_done_to_master <= 1'b1;
+//             read_data_to_master[7:0] <= {read_data_to_master[6:0],rdata};
+//         end
+//         WRITEDATA:
+//         begin
+//            counter_req_done = counter_req_done + 3'b001;
+//            if(counter_req_done == 3'b111) req_done_to_master <= 1'b1;
+//            serial_slave_data[7:0] <= {serial_slave_data[6:0],1'b0};
+//         end
+
+//     endcase
+
+// end
+
+endmodule
+

@@ -1,0 +1,39 @@
+module system_bus(
+/*	input clk,
+	input reset*/
+);
+
+reg clk;
+reg reset  = 0;
+
+initial begin
+    clk = 0;
+  #1 reset = 1; 
+end
+
+always #1 clk = ~clk; 
+
+//Connection wires with arbiter
+reg      arb_m_grant;
+wire     m_arb_request;
+wire     m_arb_util;
+
+//Connection wires of the BUS
+reg      rdata_bus;
+reg [1:0]response_bus;
+wire     addr_bus;
+wire     wdata_bus;
+
+master1 m1(
+    .clk              (clk),
+    .reset            (reset),
+    .from_arb_grant   (arb_m_grant),
+    .to_arb_req_bus   (m_arb_request),
+    .to_arb_bus_util  (m_arb_util),
+    .to_addr_bus      (addr_bus),
+    .to_wdata_bus     (wdata_bus),
+    .from_rdata_bus   (rdata_bus),
+    .from_response_bus(response_bus)
+);
+
+endmodule
